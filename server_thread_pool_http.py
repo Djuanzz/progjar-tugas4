@@ -1,71 +1,44 @@
-from socket import *
-import socket
-import time
-import sys
-import logging
+from socket import socket, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
 from concurrent.futures import ThreadPoolExecutor
 from http import HttpServer
 
 httpserver = HttpServer()
 
 def ProcessTheClient(connection, address):
-    logging.warning(f"Connection from {address}")
     rcv = ""
-    try:
-        while True:
+    print(f"[DEBUG] Connected from {address}")
+    while True:
+        try:
             data = connection.recv(1024)
             if data:
-                d = data.decode('utf-8', errors='ignore')
-                rcv = rcv + d
-                if "\\r\\n\\r\\n" in rcv:
-                    logging.warning(f"Received from client {address}:\n{rcv.strip()}")
-                    
+                d = data.decode()
+                rcv += d
+                if "\r\n\r\n" in rcv:
+                    print(f"[DEBUG] Request from {address}:\n{rcv}\n---")
                     hasil = httpserver.proses(rcv)
-                    
                     connection.sendall(hasil)
-                    
-                    break 
+                    print(f"[DEBUG] Response sent to {address}")
+                    rcv = ""
+                    break
             else:
                 break
-    except Exception as e:
-        logging.error(f"Error processing client {address}: {str(e)}")
-    finally:
-        logging.warning(f"Closing connection from {address}")
-        connection.close() 
-
+        except OSError as e:
+            print(f"[ERROR] Socket error: {e}")
+            break
+    connection.close()
+    print(f"[DEBUG] Connection closed for {address}")
 
 def Server():
-    the_clients = []
-    my_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    my_socket = socket(AF_INET, SOCK_STREAM)
+    my_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    my_socket.bind(('0.0.0.0', 8888))
+    my_socket.listen(5)
+    print("ThreadPool Server listening on port 8888")
 
-    server_port = 8885 
-    my_socket.bind(('0.0.0.0', server_port))
-    my_socket.listen(5) 
-
-    logging.warning(f"Server listening on port {server_port}")
-
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(20) as executor:
         while True:
-            try:
-                connection, client_address = my_socket.accept()
-                p = executor.submit(ProcessTheClient, connection, client_address)
-                the_clients.append(p)
-                
-                the_clients = [f for f in the_clients if not f.done()]
-                logging.info(f"Currently active client handlers: {len(the_clients)}")
-            except KeyboardInterrupt:
-                logging.warning("Server shutting down due to Ctrl+C.")
-                break
-            except Exception as e:
-                logging.error(f"Error in server accept loop: {str(e)}")
-    
-    my_socket.close()
-    logging.warning("Server socket closed.")
-
-
-def main():
-    Server()
+            connection, address = my_socket.accept()
+            executor.submit(ProcessTheClient, connection, address)
 
 if __name__ == "__main__":
-    main()
+    Server()
