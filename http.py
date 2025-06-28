@@ -1,9 +1,10 @@
 import sys
-import os
+import os.path
 import uuid
 from glob import glob
 from datetime import datetime
-from urllib.parse import unquote_plus, parse_qs
+import json
+import urllib.parse
 
 class HttpServer:
     def __init__(self):
@@ -11,34 +12,42 @@ class HttpServer:
         self.types = {
             '.pdf': 'application/pdf',
             '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
             '.txt': 'text/plain',
-            '.html': 'text/html'
+            '.html': 'text/html',
+            '.json': 'application/json'
         }
 
     def response(self, kode=404, message='Not Found', messagebody=bytes(), headers={}):
         tanggal = datetime.now().strftime('%c')
-        resp = []
-        resp.append("HTTP/1.0 {} {}\r\n".format(kode, message))
-        resp.append("Date: {}\r\n".format(tanggal))
-        resp.append("Connection: close\r\n")
-        resp.append("Server: myserver/1.0\r\n")
-        resp.append("Content-Length: {}\r\n".format(len(messagebody)))
+        resp = [
+            f"HTTP/1.0 {kode} {message}\r\n",
+            f"Date: {tanggal}\r\n",
+            "Connection: close\r\n",
+            "Server: myserver/1.0\r\n",
+            f"Content-Length: {len(messagebody)}\r\n"
+        ]
         for kk in headers:
-            resp.append("{}:{}\r\n".format(kk, headers[kk]))
+            resp.append(f"{kk}: {headers[kk]}\r\n")
         resp.append("\r\n")
 
         response_headers = ''.join(resp)
+
         if type(messagebody) is not bytes:
             messagebody = messagebody.encode()
 
-        return response_headers.encode() + messagebody
+        response = response_headers.encode() + messagebody
+        return response
 
     def proses(self, data):
         requests = data.split("\r\n")
         baris = requests[0]
         all_headers = [n for n in requests[1:] if n != '']
+
+        request_body = ""
+        if "\r\n\r\n" in data:
+            body_start = data.find("\r\n\r\n") + 4
+            request_body = data[body_start:]
+
         j = baris.split(" ")
         try:
             method = j[0].upper().strip()
@@ -46,93 +55,143 @@ class HttpServer:
             if method == 'GET':
                 return self.http_get(object_address, all_headers)
             elif method == 'POST':
-                body = data.split('\r\n\r\n', 1)[-1]
-                return self.http_post(object_address, all_headers, body)
+                return self.http_post(object_address, all_headers, request_body)
+            elif method == 'DELETE':
+                return self.http_delete(object_address, all_headers)
             else:
                 return self.response(400, 'Bad Request', '', {})
         except IndexError:
             return self.response(400, 'Bad Request', '', {})
 
     def http_get(self, object_address, headers):
+        files = glob('./*')
         thedir = './'
 
         if object_address == '/':
             return self.response(200, 'OK', 'Ini Adalah web Server percobaan', {})
 
-        elif object_address == '/list':
-            files = os.listdir(thedir)
-            file_list = '\n'.join(files)
-            return self.response(200, 'OK', file_list, {'Content-type': 'text/plain'})
-
-        elif object_address.startswith('/delete'):
-            query = object_address.split('?', 1)[-1]
-            params = parse_qs(query)
-            filename = params.get('file', [None])[0]
-            if filename:
-                filepath = os.path.join(thedir, filename)
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                    return self.response(200, 'OK', f"File {filename} berhasil dihapus", {})
-                else:
-                    return self.response(404, 'Not Found', f"File {filename} tidak ditemukan", {})
-            else:
-                return self.response(400, 'Bad Request', "Parameter 'file' tidak ada", {})
-
-        elif object_address == '/video':
+        if object_address == '/video':
             return self.response(302, 'Found', '', {'Location': 'https://youtu.be/katoxpnTf04'})
 
-        elif object_address == '/santai':
+        if object_address == '/santai':
             return self.response(200, 'OK', 'santai saja', {})
 
-        else:
-            filepath = thedir + object_address.lstrip('/')
-            if not os.path.exists(filepath):
-                return self.response(404, 'Not Found', 'File tidak ditemukan', {})
-            with open(filepath, 'rb') as fp:
-                isi = fp.read()
-            fext = os.path.splitext(filepath)[1]
-            content_type = self.types.get(fext, 'application/octet-stream')
-            headers = {'Content-type': content_type}
-            return self.response(200, 'OK', isi, headers)
+        if object_address == '/files' or object_address.startswith('/files/'):
+            return self.list_files(object_address)
 
-    def http_post(self, object_address, headers, body):
-        thedir = './'
-        if object_address == '/upload':
-            try:
-                # Format body: filename=example.txt&content=isi+file+contoh
-                data = parse_qs(body)
-                filename = data.get('filename', [None])[0]
-                content = data.get('content', [''])[0]
-                if filename:
-                    filepath = os.path.join(thedir, filename)
-                    with open(filepath, 'w') as f:
-                        f.write(unquote_plus(content))
-                    return self.response(200, 'OK', f"File {filename} berhasil diupload", {})
-                else:
-                    return self.response(400, 'Bad Request', "Parameter 'filename' tidak ditemukan", {})
-            except Exception as e:
-                return self.response(500, 'Internal Server Error', str(e), {})
-        else:
-            return self.response(404, 'Not Found', 'Endpoint tidak ditemukan', {})
+        object_address = object_address[1:]
+        if thedir + object_address not in files:
+            return self.response(404, 'Not Found', '', {})
 
-# Contoh penggunaan
+        with open(thedir + object_address, 'rb') as fp:
+            isi = fp.read()
+
+        fext = os.path.splitext(thedir + object_address)[1]
+        content_type = self.types.get(fext, 'application/octet-stream')
+
+        return self.response(200, 'OK', isi, {'Content-Type': content_type})
+
+    def http_post(self, object_address, headers, request_body):
+        if object_address.startswith('/upload'):
+            return self.upload_file(request_body, headers)
+        return self.response(200, 'OK', 'kosong', {})
+
+    def http_delete(self, object_address, headers):
+        if object_address.startswith('/files/'):
+            filename = object_address[7:]
+            return self.delete_file(filename)
+        else:
+            return self.response(400, 'Bad Request', 'Invalid delete path', {})
+
+    def list_files(self, object_address):
+        try:
+            target_dir = './' if object_address == '/files' else './' + object_address[7:]
+            if not os.path.exists(target_dir) or not os.path.isdir(target_dir):
+                return self.response(404, 'Not Found', 'Directory not found', {})
+
+            files = os.listdir(target_dir)
+            return self.response(200, 'OK', json.dumps(files), {'Content-Type': 'application/json'})
+        except Exception as e:
+            return self.response(500, 'Internal Server Error', f'Error listing files: {str(e)}', {})
+
+    def upload_file(self, request_body, headers):
+        try:
+            content_type_header = None
+            for header in headers:
+                if header.lower().startswith('content-type:'):
+                    content_type_header = header
+                    break
+
+            if not content_type_header or 'multipart/form-data' not in content_type_header:
+                filename = f"uploaded_file_{uuid.uuid4().hex[:8]}.txt"
+
+                for header in headers:
+                    if header.lower().startswith('x-filename:'):
+                        filename = header.split(':')[1].strip()
+                        break
+
+                if not filename.endswith('.txt'):
+                    return self.response(400, 'Bad Request', 'Only .txt files are allowed', {})
+
+                with open('./' + filename, 'w') as f:
+                    f.write(request_body)
+
+                response_data = {
+                    'status': 'success',
+                    'message': f'File {filename} uploaded successfully',
+                    'filename': filename
+                }
+                return self.response(201, 'Created', json.dumps(response_data), {'Content-Type': 'application/json'})
+            else:
+                return self.response(400, 'Bad Request', 'Multipart upload not supported', {})
+        except Exception as e:
+            return self.response(500, 'Internal Server Error', f'Upload error: {str(e)}', {})
+
+    def delete_file(self, filename):
+        try:
+            file_path = './' + filename
+            if not os.path.exists(file_path):
+                return self.response(404, 'Not Found', f'File {filename} not found', {})
+            if os.path.isdir(file_path):
+                return self.response(400, 'Bad Request', 'Cannot delete directory', {})
+            os.remove(file_path)
+            response_data = {
+                'status': 'success',
+                'message': f'File {filename} deleted successfully',
+                'filename': filename
+            }
+            return self.response(200, 'OK', json.dumps(response_data), {'Content-Type': 'application/json'})
+        except PermissionError:
+            return self.response(403, 'Forbidden', 'Permission denied to delete file', {})
+        except Exception as e:
+            return self.response(500, 'Internal Server Error', f'Delete error: {str(e)}', {})
+
+# TESTING
 if __name__ == "__main__":
-    server = HttpServer()
+    httpserver = HttpServer()
 
-    print("=== GET File ===")
-    print(server.proses("GET /testing.txt HTTP/1.0\r\n\r\n"))
+    print("1. GET /files:")
+    cmd = "GET /files HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    d = httpserver.proses(cmd)
+    print(d.decode())
+    print("=" * 50)
 
-    print("=== GET List ===")
-    print(server.proses("GET /list HTTP/1.0\r\n\r\n"))
+    print("2. Testing UPLOAD TXT FILE (Simple):")
+    txt_content = "Ini file txt"
+    content_length = len(txt_content)
+    cmd = f"""POST /upload HTTP/1.1\r
+    Host: localhost\r
+    Content-Type: text/plain\r
+    Content-Length: {content_length}\r
+    X-Filename: data_upload.txt\r
+    \r
+    {txt_content}"""
+    d = httpserver.proses(cmd)
+    print(d.decode())
+    print("=" * 50)
 
-    print("=== POST Upload ===")
-    upload_request = (
-        "POST /upload HTTP/1.0\r\n"
-        "Content-Type: application/x-www-form-urlencoded\r\n"
-        "\r\n"
-        "filename=baru.txt&content=ini+isi+file+baru"
-    )
-    print(server.proses(upload_request))
-
-    # print("=== POST Delete ===")
-    # print(server.proses("GET /delete?file=baru.txt HTTP/1.0\r\n\r\n"))
+    print("3. Testing DELETE FILE:")
+    cmd = "DELETE /files/data_upload.txt HTTP/1.1\r\nHost: localhost\r\n\r\n"
+    d = httpserver.proses(cmd)
+    print(d.decode())
+    print("=" * 50)
