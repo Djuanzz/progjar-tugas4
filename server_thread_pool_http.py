@@ -8,26 +8,35 @@ from http import HttpServer
 httpserver = HttpServer()
 
 def ProcessTheClient(connection, address):
-    rcv = ""
-    while True:
-        try:
+    rcv = b""
+    try:
+        print(f"[DEBUG] Connected from {address}")
+        while True:
             data = connection.recv(4096)
-            if data:
-                d = data.decode()
-                rcv += d
-                if "\r\n\r\n" in rcv:
-                    hasil = httpserver.proses(rcv)
-                    hasil = hasil + "\r\n\r\n".encode()
-                    connection.sendall(hasil)
-                    rcv = ""
-                    connection.close()
-                    return
-            else:
+            if not data:
                 break
-        except OSError as e:
-            break
-    connection.close()
-    return
+            rcv += data
+            if b"\r\n\r\n" in rcv:
+                break  # End of headers
+    except Exception as e:
+        print(f"[ERROR] Exception while receiving data from {address}: {e}")
+        connection.close()
+        return
+
+    try:
+        request_text = rcv.decode()
+        print(f"[DEBUG] Request from {address}:\n{request_text}")
+
+        hasil = httpserver.proses(request_text)
+        hasil = hasil + b"\r\n\r\n"
+        connection.sendall(hasil)
+        print(f"[DEBUG] Response sent to {address}")
+    except Exception as e:
+        print(f"[ERROR] Exception while processing request from {address}: {e}")
+    finally:
+        connection.close()
+        print(f"[DEBUG] Connection closed for {address}")
+        return
 
 def Server():
     the_clients = []
@@ -35,15 +44,22 @@ def Server():
     my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     my_socket.bind(('0.0.0.0', 8885))
     my_socket.listen(10)
-    print("Server is running on port 8885...")
+    print("Thread-based server listening on port 8885...")
 
     with ThreadPoolExecutor(20) as executor:
         while True:
-            connection, client_address = my_socket.accept()
-            p = executor.submit(ProcessTheClient, connection, client_address)
-            the_clients.append(p)
-            active = [x for x in the_clients if not x.done()]
-            print(f"Active clients: {len(active)}")
+            try:
+                connection, client_address = my_socket.accept()
+                future = executor.submit(ProcessTheClient, connection, client_address)
+                the_clients.append(future)
+                active = [x for x in the_clients if not x.done()]
+                print(f"Active threads: {len(active)}")
+            except KeyboardInterrupt:
+                print("Shutting down server...")
+                break
+            except Exception as e:
+                print(f"[ERROR] Server error: {e}")
+                continue
 
 def main():
     Server()
