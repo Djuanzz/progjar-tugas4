@@ -21,7 +21,7 @@ class HttpServer:
         resp.append("Server: myserver/1.0\r\n")
         resp.append(f"Content-Length: {len(messagebody)}\r\n")
         for kk in headers:
-            resp.append(f"{kk}:{headers[kk]}\r\n")
+            resp.append(f"{kk}: {headers[kk]}\r\n")
         resp.append("\r\n")
 
         response_headers = ''.join(resp)
@@ -44,8 +44,10 @@ class HttpServer:
                 return self.http_get(object_address, all_headers)
             elif method.upper() == 'POST':
                 return self.http_post(object_address, all_headers)
+            elif method.upper() == 'DELETE':
+                return self.http_delete(object_address, all_headers)
             else:
-                return self.response(400, 'Bad Request', '', {})
+                return self.response(400, 'Bad Request', 'Method tidak dikenali', {})
         except Exception as e:
             return self.response(500, 'Internal Server Error', str(e), {})
 
@@ -91,16 +93,18 @@ class HttpServer:
                 return self.response(200, 'OK', f'File {filename} berhasil diupload', {})
             except Exception as e:
                 return self.response(500, 'Internal Server Error', str(e), {})
-
-        elif object_address == '/delete':
-            try:
-                filename = headers[-1].strip()
-                if not os.path.exists(filename):
-                    return self.response(404, 'Not Found', 'File tidak ditemukan', {})
-                os.remove(filename)
-                return self.response(200, 'OK', f'File {filename} berhasil dihapus', {})
-            except Exception as e:
-                return self.response(500, 'Internal Server Error', str(e), {})
-
         else:
             return self.response(400, 'Bad Request', 'Perintah POST tidak dikenali', {})
+
+    def http_delete(self, object_address, headers):
+        filename = object_address.lstrip("/")  # hapus leading slash
+        return self.handle_delete(filename)
+
+    def handle_delete(self, filename):
+        try:
+            if not os.path.exists(filename):
+                return self.response(404, 'Not Found', 'File tidak ditemukan', {})
+            os.remove(filename)
+            return self.response(200, 'OK', f'File {filename} berhasil dihapus', {})
+        except Exception as e:
+            return self.response(500, 'Internal Server Error', str(e), {})
