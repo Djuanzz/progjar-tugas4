@@ -1,4 +1,7 @@
-from socket import socket, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
+# server.py
+from socket import *
+import socket
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from http import HttpServer
 
@@ -6,39 +9,44 @@ httpserver = HttpServer()
 
 def ProcessTheClient(connection, address):
     rcv = ""
-    print(f"[DEBUG] Connected from {address}")
     while True:
         try:
-            data = connection.recv(1024)
+            data = connection.recv(4096)
             if data:
                 d = data.decode()
                 rcv += d
                 if "\r\n\r\n" in rcv:
-                    print(f"[DEBUG] Request from {address}:\n{rcv}\n---")
                     hasil = httpserver.proses(rcv)
+                    hasil = hasil + "\r\n\r\n".encode()
                     connection.sendall(hasil)
-                    print(f"[DEBUG] Response sent to {address}")
                     rcv = ""
-                    break
+                    connection.close()
+                    return
             else:
                 break
         except OSError as e:
-            print(f"[ERROR] Socket error: {e}")
             break
     connection.close()
-    print(f"[DEBUG] Connection closed for {address}")
+    return
 
 def Server():
-    my_socket = socket(AF_INET, SOCK_STREAM)
-    my_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-    my_socket.bind(('0.0.0.0', 8888))
-    my_socket.listen(5)
-    print("ThreadPool Server listening on port 8888")
+    the_clients = []
+    my_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    my_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    my_socket.bind(('0.0.0.0', 8885))
+    my_socket.listen(10)
+    print("Server is running on port 8885...")
 
     with ThreadPoolExecutor(20) as executor:
         while True:
-            connection, address = my_socket.accept()
-            executor.submit(ProcessTheClient, connection, address)
+            connection, client_address = my_socket.accept()
+            p = executor.submit(ProcessTheClient, connection, client_address)
+            the_clients.append(p)
+            active = [x for x in the_clients if not x.done()]
+            print(f"Active clients: {len(active)}")
+
+def main():
+    Server()
 
 if __name__ == "__main__":
-    Server()
+    main()
