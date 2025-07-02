@@ -43,7 +43,8 @@ def upload_file(filename, content):
     send_http_request("POST", "/upload", body)
 
 def delete_file(filename):
-    send_http_request("POST", "/delete", filename)
+    path = f"/{filename}"
+    send_http_request("DELETE", path)
 
 def menu():
     while True:
